@@ -32,6 +32,21 @@ Check multiple dependencies:
 gh outagedeck github cloudflare openai anthropic
 ```
 
+During GitHub's Actions incident on August 6, 2026, the extension kept the still-healthy API separate from the affected services:
+
+```console
+$ gh outagedeck github
+!! GitHub: Degraded — Minor Service Outage
+   !! GitHub Actions         partial_outage
+   OK GitHub API             operational
+   !! GitHub Web             degraded
+   Source checked: 2026-08-06T15:50:39.71+00:00 (GitHub Status)
+   Details: https://outagedeck.com/providers/github?utm_source=github_cli&utm_medium=extension&utm_campaign=gh_extension
+   Alerts:  https://outagedeck.com/alerts?utm_source=github_cli&utm_medium=extension&utm_campaign=gh_extension
+```
+
+This command exited `2` under the default `degraded` threshold. Service rows prevent an Actions incident from being misreported as an API outage, while the non-zero exit remains useful in scripts and pre-debug checks.
+
 Use structured output and a CI-friendly failure threshold:
 
 ```bash
