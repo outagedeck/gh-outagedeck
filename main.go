@@ -129,6 +129,16 @@ func providerURL(slug string) string {
 	return pageURL("/providers/" + url.PathEscape(slug))
 }
 
+func stackAlertsURL(slugs []string) string {
+	query := url.Values{}
+	query.Set("stack", strings.Join(slugs, ","))
+	query.Set("utm_source", "github_cli")
+	query.Set("utm_medium", "extension")
+	query.Set("utm_campaign", "gh_extension")
+	query.Set("utm_content", "alerts_command")
+	return "https://outagedeck.com/account?" + query.Encode()
+}
+
 func requestJSON(ctx context.Context, client *http.Client, endpoint string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -308,7 +318,7 @@ func statusCommand(args []string, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintf(stdout, "%s %s: %s", marker(item.Status), item.Name, item.Label)
 			if item.Headline != "" {
-				fmt.Fprintf(stdout, " — %s", item.Headline)
+				fmt.Fprintf(stdout, ": %s", item.Headline)
 			}
 			fmt.Fprintln(stdout)
 			if *showServices {
@@ -399,12 +409,26 @@ func searchCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func alertsCommand(args []string, stdout, stderr io.Writer) int {
+	providers, err := normalizeProviders(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "Set up alerts for %s:\n", strings.Join(providers, ", "))
+	fmt.Fprintln(stdout, stackAlertsURL(providers))
+	fmt.Fprintln(stdout, "\nThe selected stack will already be filled in after sign-in.")
+	return 0
+}
+
 func usage(writer io.Writer) {
-	fmt.Fprintln(writer, `OutageDeck for GitHub CLI — verify dependency status before debugging
+	fmt.Fprintln(writer, `OutageDeck for GitHub CLI: verify dependency status before debugging
 
 Usage:
   gh outagedeck [flags] [provider...]
   gh outagedeck search [flags] <query>
+  gh outagedeck alerts [provider...]
   gh outagedeck version
 
 With no provider, the command checks GitHub, GitHub Actions, GitHub API,
@@ -414,6 +438,7 @@ Examples:
   gh outagedeck
   gh outagedeck github cloudflare openai
   gh outagedeck --json --fail-on=outage github anthropic
+  gh outagedeck alerts github cloudflare openai
   gh outagedeck search "Claude"
 
 Environment:
@@ -426,6 +451,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "search":
 			return searchCommand(args[1:], stdout, stderr)
+		case "alerts":
+			return alertsCommand(args[1:], stdout, stderr)
 		case "version", "--version", "-v":
 			fmt.Fprintln(stdout, version)
 			return 0
