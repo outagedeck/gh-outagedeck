@@ -6,13 +6,19 @@ Check whether GitHub or another cloud/SaaS dependency is reporting an incident b
 
 OutageDeck normalizes official vendor status feeds. It is corroborating evidence, not a replacement for synthetic monitoring.
 
-## Install
+## Quick start
+
+Install the extension, check the dependencies behind a repository or deployment, then create an alert setup link for that same stack:
 
 ```bash
 gh extension install outagedeck/gh-outagedeck
+gh outagedeck github cloudflare openai
+gh outagedeck alerts github cloudflare openai
 ```
 
-## Use
+The status check is keyless and read-only. The alert command prints an OutageDeck account link with those providers already selected. Free email alerts cover up to five providers, and the selected stack survives the email sign-in round trip.
+
+## Status checks
 
 With no arguments, `gh outagedeck` checks GitHub and its tracked GitHub Actions, API, and Web services:
 
@@ -58,6 +64,8 @@ Find provider slugs:
 ```bash
 gh outagedeck search "Claude"
 ```
+
+## Alerts
 
 Turn a checked stack into an alert setup link:
 
