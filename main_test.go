@@ -213,6 +213,33 @@ func TestSearchNoMatchCarriesAttribution(t *testing.T) {
 	}
 }
 
+func TestAlertsBuildsStackSpecificAttributedURL(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := run([]string{"alerts", "GitHub,cloudflare", "github"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("exit = %d, stderr = %s", exit, stderr.String())
+	}
+	for _, expected := range []string{
+		"Set up alerts for github, cloudflare:",
+		"stack=github%2Ccloudflare",
+		"utm_campaign=gh_extension",
+		"utm_content=alerts_command",
+		"selected stack will already be filled in after sign-in",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("missing %q in output:\n%s", expected, stdout.String())
+		}
+	}
+}
+
+func TestAlertsRejectsInvalidProvider(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := run([]string{"alerts", "bad slug"}, &stdout, &stderr)
+	if exit != 1 || !strings.Contains(stderr.String(), "invalid provider slug") {
+		t.Fatalf("exit = %d, stderr = %s", exit, stderr.String())
+	}
+}
+
 func TestVersionAndHelpDoNotUseNetwork(t *testing.T) {
 	for _, args := range [][]string{{"version"}, {"--help"}} {
 		var stdout, stderr bytes.Buffer

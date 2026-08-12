@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Check whether GitHub—or another cloud/SaaS dependency—is reporting an incident before debugging your repository, workflow, or deployment.
+Check whether GitHub or another cloud/SaaS dependency is reporting an incident before debugging your repository, workflow, or deployment.
 
 OutageDeck normalizes official vendor status feeds. It is corroborating evidence, not a replacement for synthetic monitoring.
 
@@ -18,7 +18,7 @@ With no arguments, `gh outagedeck` checks GitHub and its tracked GitHub Actions,
 
 ```console
 $ gh outagedeck
-OK GitHub: Operational — All Systems Operational
+OK GitHub: Operational: All Systems Operational
    OK GitHub Actions         operational
    OK GitHub API             operational
    OK GitHub Web             operational
@@ -36,7 +36,7 @@ During GitHub's Actions incident on August 6, 2026, the extension kept the still
 
 ```console
 $ gh outagedeck github
-!! GitHub: Degraded — Minor Service Outage
+!! GitHub: Degraded: Minor Service Outage
    !! GitHub Actions         partial_outage
    OK GitHub API             operational
    !! GitHub Web             degraded
@@ -58,6 +58,18 @@ Find provider slugs:
 ```bash
 gh outagedeck search "Claude"
 ```
+
+Turn a checked stack into an alert setup link:
+
+```console
+$ gh outagedeck alerts github cloudflare openai
+Set up alerts for github, cloudflare, openai:
+https://outagedeck.com/account?stack=github%2Ccloudflare%2Copenai&utm_campaign=gh_extension&utm_content=alerts_command&utm_medium=extension&utm_source=github_cli
+
+The selected stack will already be filled in after sign-in.
+```
+
+The link opens the normal account flow. Free email alerts cover up to five providers, and the selected stack survives the email sign-in round trip.
 
 The status command exits with:
 
