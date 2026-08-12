@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -114,6 +116,56 @@ var failureRanks = map[string]int{
 	"never":        1 << 30,
 }
 
+type providerRule struct {
+	Slug    string
+	Paths   []string
+	Markers []string
+}
+
+var repositoryProviderRules = []providerRule{
+	{Slug: "aws", Markers: []string{"aws-actions/", "@aws-sdk/", "amazonaws.com", "boto3", "provider \"aws\""}},
+	{Slug: "cloudflare", Paths: []string{"wrangler.toml", "wrangler.json", "wrangler.jsonc"}, Markers: []string{"cloudflare/wrangler-action", "@cloudflare/", "cloudflare-go", "wrangler deploy"}},
+	{Slug: "google-cloud", Markers: []string{"google-github-actions/", "@google-cloud/", "google.cloud/", "google-cloud", "provider \"google\""}},
+	{Slug: "azure", Markers: []string{"azure/", "@azure/", "azure-identity", "provider \"azurerm\"", "mcr.microsoft.com/azure"}},
+	{Slug: "openai", Markers: []string{"\"openai\"", "openai/", "github.com/openai/", "from openai import", "import openai"}},
+	{Slug: "anthropic", Markers: []string{"\"anthropic\"", "@anthropic-ai/", "github.com/anthropics/", "from anthropic import", "import anthropic"}},
+	{Slug: "vercel", Paths: []string{"vercel.json"}, Markers: []string{"vercel/action", "vercel deploy", "\"vercel\""}},
+	{Slug: "netlify", Paths: []string{"netlify.toml"}, Markers: []string{"netlify/actions", "netlify deploy", "\"netlify-cli\""}},
+	{Slug: "sentry", Markers: []string{"getsentry/", "@sentry/", "sentry-sdk", "sentry_sdk"}},
+	{Slug: "datadog", Markers: []string{"datadog/", "dd-trace", "datadog-api-client"}},
+	{Slug: "newrelic", Markers: []string{"newrelic/", "newrelic", "new-relic"}},
+	{Slug: "grafana", Markers: []string{"grafana/", "grafana-agent", "grafana-cloud"}},
+	{Slug: "slack", Markers: []string{"slackapi/", "@slack/", "slack-sdk", "slack_sdk"}},
+	{Slug: "firebase", Paths: []string{"firebase.json"}, Markers: []string{"firebase-tools", "firebase-admin", "firebase/app", "google.golang.org/api/firebase"}},
+	{Slug: "supabase", Markers: []string{"supabase/", "@supabase/", "supabase-py"}},
+	{Slug: "circleci", Paths: []string{".circleci/config.yml", ".circleci/config.yaml"}, Markers: []string{"circleci/"}},
+	{Slug: "gitlab", Paths: []string{".gitlab-ci.yml", ".gitlab-ci.yaml"}, Markers: []string{"gitlab.com/"}},
+	{Slug: "bitbucket", Paths: []string{"bitbucket-pipelines.yml", "bitbucket-pipelines.yaml"}, Markers: []string{"bitbucket.org/"}},
+	{Slug: "docker", Paths: []string{"dockerfile", ".dockerignore", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}, Markers: []string{"docker/build-push-action", "docker/login-action", "docker.io/"}},
+	{Slug: "heroku", Paths: []string{"procfile", "heroku.yml", "app.json"}, Markers: []string{"heroku/", "heroku container:"}},
+	{Slug: "render", Paths: []string{"render.yaml", "render.yml"}, Markers: []string{"render.com/"}},
+	{Slug: "digitalocean", Markers: []string{"digitalocean/action-", "doctl", "digitalocean/godo"}},
+	{Slug: "twilio", Markers: []string{"\"twilio\"", "twilio/twilio-", "github.com/twilio/", "from twilio"}},
+}
+
+var repositoryScanNames = map[string]bool{
+	".gitlab-ci.yml": true, ".gitlab-ci.yaml": true, ".tool-versions": true,
+	"app.json": true, "bitbucket-pipelines.yml": true, "bitbucket-pipelines.yaml": true,
+	"build.gradle": true, "build.gradle.kts": true, "cargo.lock": true, "cargo.toml": true,
+	"compose.yaml": true, "compose.yml": true, "docker-compose.yaml": true, "docker-compose.yml": true,
+	"dockerfile": true, "firebase.json": true, "flake.nix": true, "gemfile": true, "gemfile.lock": true,
+	"go.mod": true, "go.sum": true, "gradle.properties": true, "heroku.yml": true, "netlify.toml": true,
+	"package-lock.json": true, "package.json": true, "pipfile": true, "pnpm-lock.yaml": true,
+	"poetry.lock": true, "pom.xml": true, "procfile": true, "pyproject.toml": true, "render.yaml": true,
+	"render.yml": true, "requirements.txt": true, "vercel.json": true, "wrangler.json": true,
+	"wrangler.jsonc": true, "wrangler.toml": true, "yarn.lock": true,
+}
+
+var repositorySkipDirectories = map[string]bool{
+	".git": true, ".next": true, ".venv": true, "build": true, "coverage": true,
+	"dist": true, "node_modules": true, "target": true, "vendor": true, "venv": true,
+}
+
 func apiBase() string {
 	if value := strings.TrimRight(os.Getenv("OUTAGEDECK_API_BASE_URL"), "/"); value != "" {
 		return value
@@ -129,14 +181,18 @@ func providerURL(slug string) string {
 	return pageURL("/providers/" + url.PathEscape(slug))
 }
 
-func stackAlertsURL(slugs []string) string {
+func attributedStackAlertsURL(slugs []string, content string) string {
 	query := url.Values{}
 	query.Set("stack", strings.Join(slugs, ","))
 	query.Set("utm_source", "github_cli")
 	query.Set("utm_medium", "extension")
 	query.Set("utm_campaign", "gh_extension")
-	query.Set("utm_content", "alerts_command")
+	query.Set("utm_content", content)
 	return "https://outagedeck.com/account?" + query.Encode()
+}
+
+func stackAlertsURL(slugs []string) string {
+	return attributedStackAlertsURL(slugs, "alerts_command")
 }
 
 func requestJSON(ctx context.Context, client *http.Client, endpoint string, target any) error {
@@ -239,6 +295,131 @@ func normalizeProviders(values []string) ([]string, error) {
 		return nil, errors.New("at most 12 providers can be checked at once")
 	}
 	return providers, nil
+}
+
+func repositoryPathMatches(path string, values []string) bool {
+	for _, value := range values {
+		if path == value || strings.HasSuffix(path, "/"+value) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldScanRepositoryFile(path string) bool {
+	lowerPath := strings.ToLower(filepath.ToSlash(path))
+	base := strings.ToLower(filepath.Base(lowerPath))
+	if repositoryScanNames[base] || strings.Contains(lowerPath, "/.github/workflows/") || strings.Contains(lowerPath, "/.circleci/") {
+		return true
+	}
+	return strings.HasSuffix(base, ".tf") || strings.HasSuffix(base, ".hcl")
+}
+
+func detectRepositoryProviders(root string) ([]string, map[string][]string, error) {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	rootInfo, err := os.Stat(absoluteRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !rootInfo.IsDir() {
+		return nil, nil, fmt.Errorf("repository path is not a directory: %s", root)
+	}
+
+	hits := make(map[string]map[string]bool)
+	addHit := func(slug, source string) {
+		if hits[slug] == nil {
+			hits[slug] = make(map[string]bool)
+		}
+		hits[slug][source] = true
+	}
+	if _, err := os.Stat(filepath.Join(absoluteRoot, ".git")); err == nil {
+		addHit("github", ".git")
+	}
+
+	filesScanned := 0
+	err = filepath.WalkDir(absoluteRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != absoluteRoot && repositorySkipDirectories[strings.ToLower(entry.Name())] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filesScanned >= 2000 {
+			return nil
+		}
+
+		relativePath, err := filepath.Rel(absoluteRoot, path)
+		if err != nil {
+			return err
+		}
+		source := filepath.ToSlash(relativePath)
+		lowerPath := strings.ToLower(source)
+		if strings.HasPrefix(lowerPath, ".github/workflows/") {
+			addHit("github", source)
+		}
+		for _, rule := range repositoryProviderRules {
+			if repositoryPathMatches(lowerPath, rule.Paths) {
+				addHit(rule.Slug, source)
+			}
+		}
+		if !shouldScanRepositoryFile("/" + source) {
+			return nil
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > 1024*1024 {
+			return nil
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		filesScanned++
+		if strings.IndexByte(string(contents), 0) >= 0 {
+			return nil
+		}
+		lowerContents := strings.ToLower(string(contents))
+		for _, rule := range repositoryProviderRules {
+			for _, marker := range rule.Markers {
+				if strings.Contains(lowerContents, marker) {
+					addHit(rule.Slug, source)
+					break
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	providers := make([]string, 0, len(hits))
+	if len(hits["github"]) > 0 {
+		providers = append(providers, "github")
+	}
+	for _, rule := range repositoryProviderRules {
+		if len(hits[rule.Slug]) > 0 {
+			providers = append(providers, rule.Slug)
+		}
+	}
+
+	sources := make(map[string][]string, len(providers))
+	for _, slug := range providers {
+		for source := range hits[slug] {
+			sources[slug] = append(sources[slug], source)
+		}
+		sort.Strings(sources[slug])
+	}
+	return providers, sources, nil
 }
 
 func marker(status string) string {
@@ -422,12 +603,66 @@ func alertsCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func stackCommand(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("stack", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	path := flags.String("path", ".", "repository directory to inspect")
+	failOn := flags.String("fail-on", "degraded", "degraded, outage, major_outage, or never")
+	showServices := flags.Bool("services", true, "show provider services")
+	timeout := flags.Duration("timeout", 10*time.Second, "HTTP timeout")
+	if err := flags.Parse(args); err != nil {
+		return 1
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "stack accepts flags only; use --path to choose a repository")
+		return 1
+	}
+
+	providers, sources, err := detectRepositoryProviders(*path)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(providers) == 0 {
+		fmt.Fprintln(stderr, "no recognized cloud or SaaS dependencies found")
+		return 1
+	}
+	if len(providers) > 12 {
+		fmt.Fprintf(stderr, "detected %d providers; checking the first 12\n", len(providers))
+		providers = providers[:12]
+	}
+
+	fmt.Fprintf(stdout, "Detected repository stack: %s\n", strings.Join(providers, ", "))
+	for _, slug := range providers {
+		foundIn := sources[slug]
+		if len(foundIn) > 3 {
+			fmt.Fprintf(stdout, "  %-16s %s (+%d more)\n", slug, strings.Join(foundIn[:3], ", "), len(foundIn)-3)
+			continue
+		}
+		fmt.Fprintf(stdout, "  %-16s %s\n", slug, strings.Join(foundIn, ", "))
+	}
+	fmt.Fprintln(stdout)
+
+	statusArgs := []string{
+		"--fail-on=" + *failOn,
+		fmt.Sprintf("--services=%t", *showServices),
+		"--timeout=" + timeout.String(),
+		strings.Join(providers, ","),
+	}
+	exit := statusCommand(statusArgs, stdout, stderr)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Keep this detected stack on watch:")
+	fmt.Fprintln(stdout, attributedStackAlertsURL(providers, "repository_stack"))
+	return exit
+}
+
 func usage(writer io.Writer) {
 	fmt.Fprintln(writer, `OutageDeck for GitHub CLI: verify dependency status before debugging
 
 Usage:
   gh outagedeck [flags] [provider...]
   gh outagedeck search [flags] <query>
+  gh outagedeck stack [flags]
   gh outagedeck alerts [provider...]
   gh outagedeck version
 
@@ -438,6 +673,7 @@ Examples:
   gh outagedeck
   gh outagedeck github cloudflare openai
   gh outagedeck --json --fail-on=outage github anthropic
+  gh outagedeck stack
   gh outagedeck alerts github cloudflare openai
   gh outagedeck search "Claude"
 
@@ -453,6 +689,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return searchCommand(args[1:], stdout, stderr)
 		case "alerts":
 			return alertsCommand(args[1:], stdout, stderr)
+		case "stack":
+			return stackCommand(args[1:], stdout, stderr)
 		case "version", "--version", "-v":
 			fmt.Fprintln(stdout, version)
 			return 0

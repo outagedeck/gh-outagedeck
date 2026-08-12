@@ -12,11 +12,35 @@ Install the extension, check the dependencies behind a repository or deployment,
 
 ```bash
 gh extension install outagedeck/gh-outagedeck
+gh outagedeck stack
 gh outagedeck github cloudflare openai
 gh outagedeck alerts github cloudflare openai
 ```
 
 The status check is keyless and read-only. The alert command prints an OutageDeck account link with those providers already selected. Free email alerts cover up to five providers, and the selected stack survives the email sign-in round trip.
+
+## Detect a repository stack
+
+Run the stack command inside a repository when you do not want to assemble provider slugs by hand:
+
+```console
+$ gh outagedeck stack
+Detected repository stack: github, aws, cloudflare, openai
+  github           .git, .github/workflows/deploy.yml
+  aws              .github/workflows/deploy.yml
+  cloudflare       wrangler.toml
+  openai           package.json
+
+OK GitHub: Operational: All Systems Operational
+...
+
+Keep this detected stack on watch:
+https://outagedeck.com/account?stack=github%2Caws%2Ccloudflare%2Copenai&...
+```
+
+Detection stays on your machine. The extension reads common manifests, infrastructure files, and CI workflows, while skipping dependency and build directories. It sends only the detected provider slugs to the same keyless status API used by normal checks.
+
+Use `gh outagedeck stack --path ../another-repo` to inspect another directory. The usual `--fail-on`, `--services`, and `--timeout` flags also work.
 
 ## Status checks
 

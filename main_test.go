@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -236,6 +238,79 @@ func TestAlertsRejectsInvalidProvider(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exit := run([]string{"alerts", "bad slug"}, &stdout, &stderr)
 	if exit != 1 || !strings.Contains(stderr.String(), "invalid provider slug") {
+		t.Fatalf("exit = %d, stderr = %s", exit, stderr.String())
+	}
+}
+
+func writeRepositoryFile(t *testing.T, root, name, contents string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDetectRepositoryProviders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRepositoryFile(t, root, ".github/workflows/deploy.yml", "uses: aws-actions/configure-aws-credentials@v5\nuses: cloudflare/wrangler-action@v3\n")
+	writeRepositoryFile(t, root, "package.json", `{"dependencies":{"openai":"latest","@sentry/node":"latest"}}`)
+	writeRepositoryFile(t, root, "node_modules/example/package.json", `{"dependencies":{"@supabase/supabase-js":"latest"}}`)
+
+	providers, sources, err := detectRepositoryProviders(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(providers, ","); got != "github,aws,cloudflare,openai,sentry" {
+		t.Fatalf("providers = %s", got)
+	}
+	if !strings.Contains(strings.Join(sources["github"], ","), ".github/workflows/deploy.yml") {
+		t.Fatalf("github sources = %v", sources["github"])
+	}
+	if strings.Contains(strings.Join(providers, ","), "supabase") {
+		t.Fatalf("ignored dependency was detected: %v", providers)
+	}
+}
+
+func TestStackChecksDetectedProvidersAndCarriesAttribution(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRepositoryFile(t, root, "wrangler.toml", "name = \"edge-worker\"\n")
+	server := withProviderServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		slug := strings.TrimPrefix(request.URL.Path, "/providers/")
+		fmt.Fprint(writer, providerResponse(slug, strings.ToUpper(slug), "operational"))
+	})
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	exit := run([]string{"stack", "--path", root, "--services=false", "--fail-on=never"}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("exit = %d, stderr = %s", exit, stderr.String())
+	}
+	for _, expected := range []string{
+		"Detected repository stack: github, cloudflare",
+		"OK GITHUB",
+		"OK CLOUDFLARE",
+		"stack=github%2Ccloudflare",
+		"utm_content=repository_stack",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("missing %q in output:\n%s", expected, stdout.String())
+		}
+	}
+}
+
+func TestStackFailsWhenNothingIsDetected(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	exit := run([]string{"stack", "--path", t.TempDir()}, &stdout, &stderr)
+	if exit != 1 || !strings.Contains(stderr.String(), "no recognized") {
 		t.Fatalf("exit = %d, stderr = %s", exit, stderr.String())
 	}
 }
